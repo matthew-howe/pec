@@ -1,7 +1,8 @@
 'use strict'
 
-const { cardCodes, stringifyCardCode } = require('phe')
+const { cardCodes, stringifyCardCode, setStringifyCardCodes } = require('phe')
 const evaluate7Cards = require('phe/lib/evaluator7')
+const evaluate5Cards = require('phe/lib/evaluator5')
 
 const { allPossibleFullBoardCodes, allPossiblePostFlopBoardCodes } = require('./lib/board')
 const { cardsArrayMinusBlockers } = require('./lib/common')
@@ -22,6 +23,65 @@ function stringifyTrackedCardComboKeys(codedMap) {
 //
 // Compare Combos/Board
 //
+
+function compareStrengths(strength1, strength2) {
+  return (
+      strength1 === strength2 ?  0
+    : strength1 < strength2   ? -1
+    : 1
+  )
+}
+
+function getBestOmaha5CardStrength(combos) {
+  let bestStrength = Infinity;
+
+  for (let i = 0; i < combos.length; i++) {
+    let cur = combos[i];
+    let str = evaluate5Cards(cur[0], cur[1], cur[2], cur[3], cur[4])
+    if (str < bestStrength) {
+      bestStrength = str;
+    }
+  }
+
+  return bestStrength;
+}
+
+function getOmaha5CardCombos(combos, board) {
+  let output = [];
+  let i  = 0;
+  let j  = 1;
+  let k  = 2;
+  let c1 = combos[0];
+  let c2 = combos[1];
+
+  while (k !== 4) {
+    output.push([c1, c2, board[i], board[j], board[k]]);
+    k++;
+  }
+
+  while (j !== 3) {
+    output.push([c1, c2, board[i], board[j], board[k]]);
+    j++;
+  }
+
+  while (i !== 3) {
+    output.push([c1, c2, board[i], board[j], board[k]]);
+    i++;
+  }
+
+  output.push([c1, c2, board[0], board[2], board[3]])
+  output.push([c1, c2, board[1], board[2], board[3]])
+  output.push([c1, c2, board[1], board[2], board[4]])
+
+  return output;
+}
+
+function evaluate7CardsOmaha(b1, b2, b3, b4, b5, c1, c2) {
+  let allCombos = getOmaha5CardCombos([c1, c2], [b1, b2, b3, b4, b5]);
+  let bestStrength = getBestOmaha5CardStrength(allCombos);
+  return bestStrength;
+}
+
 function compareTwoWithBoardExpanded(combo1First, combo1Second, combo2First, combo2Second, b1, b2, b3, b4, b5) {
   const strength1 = evaluate7Cards(b1, b2, b3, b4, b5, combo1First, combo1Second)
   const strength2 = evaluate7Cards(b1, b2, b3, b4, b5, combo2First, combo2Second)
@@ -37,6 +97,66 @@ function compareTwoWithBoard(combo1First, combo1Second, combo2First, combo2Secon
     combo1First, combo1Second, combo2First, combo2Second,
     board[0], board[1], board[2], board[3], board[4])
 }
+
+function compareSixWithBoardExpanded(c1, c2, c3, c4, c5, c6, b1, b2, b3, b4, b5) {
+  // TODO: switch to 5 card evaluator
+  const s1 = evaluate7CardsOmaha(b1, b2, b3, b4, b5, c1[0], c1[1]);
+  const s2 = evaluate7CardsOmaha(b1, b2, b3, b4, b5, c2[0], c2[1]);
+  const s3 = evaluate7CardsOmaha(b1, b2, b3, b4, b5, c3[0], c3[1]);
+  const s4 = evaluate7CardsOmaha(b1, b2, b3, b4, b5, c4[0], c4[1]);
+  const s5 = evaluate7CardsOmaha(b1, b2, b3, b4, b5, c5[0], c5[1]);
+  const s6 = evaluate7CardsOmaha(b1, b2, b3, b4, b5, c6[0], c6[1]);
+  const combos = [c1, c2, c3, c4, c5, c6];
+  const strengths = [s1, s2, s3, s4, s5, s6];
+
+  let bestCombo;
+  let bestStrength = Infinity;
+
+  for (let i = 0; i < 6; i++) {
+    if (strengths[i] < bestStrength) {
+      bestStrength = strengths[i];
+      bestCombo = combos[i];
+    }
+  }
+
+  return [bestCombo[0], bestCombo[1]];
+}
+
+function compareSixWithBoard(b1, b2, b3, b4, b5, combos) {
+    const c1 = combos[0];
+    const c2 = combos[1];
+    const c3 = combos[2];
+    const c4 = combos[3];
+    const c5 = combos[4];
+    const c6 = combos[5];
+
+  return compareSixWithBoardExpanded(
+    c1, c2, c3, c4, c5, c6, b1, b2, b3, b4, b5
+  )
+}
+
+
+function compareOmahaWithBoardExpanded(combo1, combo2, b1, b2, b3, b4, b5) {
+  const bestCombo1 = compareSixWithBoard(b1, b2, b3, b4, b5, combo1)
+  const bestCombo2 = compareSixWithBoard(b1, b2, b3, b4, b5, combo2)
+
+
+  const strength1 = evaluate7CardsOmaha(b1, b2, b3, b4, b5, bestCombo1[0], bestCombo1[1])
+  const strength2 = evaluate7CardsOmaha(b1, b2, b3, b4, b5, bestCombo2[0], bestCombo2[1])
+
+  return (
+      strength1 === strength2 ?  0
+    : strength1 < strength2   ? -1
+    : 1
+  )
+}
+
+function compareOmahaWithBoard(combo1, combo2, board) {
+  return compareOmahaWithBoardExpanded(
+    combo1, combo2,
+    board[0], board[1], board[2], board[3], board[4])
+}
+
 
 // allow excluding up to 4 (flop + turn)
 function randomCardIdx(max, a, b, c, d) {
@@ -97,12 +217,24 @@ function randomRemainingBoard(boardCodes, cardArray, max) {
 // Race Codes
 //
 function raceCodesAllForBoard(combo1, combo2, hasBoard, boardCodes) {
-  const combo1First  = combo1[0]
-  const combo1Second = combo1[1]
-  const combo2First  = combo2[0]
-  const combo2Second = combo2[1]
+  let blockers;
+  if (combo1.length === 6) {
+    // handle omaha blockers
+    blockers = new Set();
+    for (let i = 0; i < 6; i++) {
+      for (let j = 0; j < 2; j++) {
+        blockers.add(combo1[i][j])
+        blockers.add(combo2[i][j])
+      }
+    }
+  } else {
+    const combo1First  = combo1[0]
+    const combo1Second = combo1[1]
+    const combo2First  = combo2[0]
+    const combo2Second = combo2[1]
 
-  const blockers = new Set([ combo1First, combo1Second, combo2First, combo2Second ])
+    blockers = new Set([ combo1First, combo1Second, combo2First, combo2Second ])
+  }
 
   const boards = hasBoard
     ? allPossiblePostFlopBoardCodes(blockers, boardCodes)
@@ -114,25 +246,41 @@ function raceCodesAllForBoard(combo1, combo2, hasBoard, boardCodes) {
 
   // Evaluate all
   for (var b = 0; b < boards.length; b += 5) {
-    const res = compareTwoWithBoardExpanded(
-      combo1First, combo1Second, combo2First, combo2Second,
-      boards[b], boards[b + 1], boards[b + 2], boards[b + 3], boards[b + 4])
-
+    let res;
+    if (combo1.length === 6) {
+      res = compareOmahaWithBoard(combo1, combo2, board)
+    } else {
+      res = compareTwoWithBoard(combo1First, combo1Second, combo2First, combo2Second, board)
+    }
     if (res === 0) tie++
     else if (res < 0) win++
     else loose++
+
   }
 
   return { win, loose, tie }
 }
 
 function raceCodesRandomForBoard(combo1, combo2, times, hasBoard, boardCodes) {
-  const combo1First  = combo1[0]
-  const combo1Second = combo1[1]
-  const combo2First  = combo2[0]
-  const combo2Second = combo2[1]
+  let blockers;
+  if (combo1.length === 6) {
+    // handle omaha blockers
+    blockers = new Set();
+    for (let i = 0; i < 6; i++) {
+      for (let j = 0; j < 2; j++) {
+        blockers.add(combo1[i][j])
+        blockers.add(combo2[i][j])
+      }
+    }
+  } else {
+    const combo1First  = combo1[0]
+    const combo1Second = combo1[1]
+    const combo2First  = combo2[0]
+    const combo2Second = combo2[1]
 
-  const blockers = new Set([ combo1First, combo1Second, combo2First, combo2Second ])
+    blockers = new Set([ combo1First, combo1Second, combo2First, combo2Second ])
+  }
+
   if (hasBoard) {
     for (var bi = 0; bi < boardCodes.length; bi++) blockers.add(boardCodes[bi])
   }
@@ -149,16 +297,23 @@ function raceCodesRandomForBoard(combo1, combo2, times, hasBoard, boardCodes) {
       ? randomRemainingBoard(boardCodes, cardArray, cardArrayLen)
       : randomBoard(cardArray, cardArrayLen)
 
-    const res = compareTwoWithBoard(combo1First, combo1Second, combo2First, combo2Second, board)
+    let res;
+    if (combo1.length === 6) {
+      res = compareOmahaWithBoard(combo1, combo2, board)
+    } else {
+      res = compareTwoWithBoard(combo1First, combo1Second, combo2First, combo2Second, board)
+    }
     if (res === 0) tie++
     else if (res < 0) win++
     else loose++
+
   }
 
   return { win, loose, tie }
 }
 
 function _raceCodesForBoard(combo1, combo2, times, hasBoard, boardCodes) {
+
   return times == null
     ? raceCodesAllForBoard(combo1, combo2, hasBoard, boardCodes)
     : raceCodesRandomForBoard(combo1, combo2, times, hasBoard, boardCodes)
@@ -225,9 +380,15 @@ function raceRangeCodes(combo1, range, times, trackCombos) {
 // Race Combos
 //
 function _raceCombosForBoard(combo1, combo2, times, hasBoard, boardCodes) {
-  const comboCodes1 = cardCodes(combo1)
-  const comboCodes2 = cardCodes(combo2)
-  return _raceCodesForBoard(comboCodes1, comboCodes2, times, hasBoard, boardCodes)
+  if (combo1.length === 2) {
+    const comboCodes1 = cardCodes(combo1)
+    const comboCodes2 = cardCodes(combo2)
+    return _raceCodesForBoard(comboCodes1, comboCodes2, times, hasBoard, boardCodes)
+  } else {
+    const comboCodes1 = omahaCardCodes(combo1);
+    const comboCodes2 = omahaCardCodes(combo2);
+    return _raceCodesForBoard(comboCodes1, comboCodes2, times, hasBoard, boardCodes)
+  }
 }
 
 /**
@@ -340,6 +501,31 @@ function rates({ win, loose, tie, combos }) {
   return { winRate, looseRate, tieRate, combos: map }
 }
 
+function hello() {
+  return 'hello world'
+}
+
+// Omaha Utilities
+function getOmahaCombos(hand) {
+  const combos = new Set()
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      if (i === j) continue;
+      else if (combos.has(hand[j] + hand[i])) continue;
+      else combos.add(hand[i] + hand[j])
+    }
+  }
+  let output = []
+  combos.forEach(el => output.push([el[0] + el[1], el[2] + el[3]]))
+  return output;
+}
+
+function omahaCardCodes(hand) {
+  const combos = getOmahaCombos(hand)
+  return combos.map(cardCodes);
+}
+
+
 module.exports = {
     raceCodes
   , raceCodesForBoard
@@ -350,4 +536,5 @@ module.exports = {
   , raceRange
   , raceRangeForBoard
   , rates
+  , hello
 }
